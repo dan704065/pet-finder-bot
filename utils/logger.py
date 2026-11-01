@@ -1,15 +1,14 @@
 import logging
-import os
 from logging.handlers import RotatingFileHandler
-
-os.makedirs("logs", exist_ok=True)
+from pathlib import Path
 
 logger = logging.getLogger("pet_finder_bot")
-logger.setLevel(logging.INFO)
 
-formatter = logging.Formatter('%(asctime)s | %(levelname)-8s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
-file_handler = RotatingFileHandler("logs/bot.log", maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
-file_handler.setFormatter(formatter)
-
-logger.addHandler(file_handler)
+def configure_logging(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    logging.basicConfig(
+        level=logging.INFO, handlers=[handler, logging.StreamHandler()], force=True,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    )

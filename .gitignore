@@ -6,9 +6,13 @@ config.example.py
 # База данных
 database.db
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Виртуальное окружение
 venv/
+.venv/
 .env
 
 # Логи

@@ -1,66 +1,66 @@
 import asyncio
 import logging
+
 from aiogram import Bot, Dispatcher
-from config import BOT_TOKEN
-from handlers import user, admin
-from database.db import init_db, get_7_day_reminder_applications, cleanup_old_deleted_applications
-from utils.logger import logger
+from aiogram.fsm.storage.memory import SimpleEventIsolation
 
-async def daily_maintenance_task(bot: Bot):
+from database.migrations import migrate
+from handlers import create_router
+from services.container import Services
+from settings import Settings
+from storage.sqlite import SQLiteStorage
+from utils.logger import configure_logging
+from workers.notifications import NotificationWorker
+
+
+logger = logging.getLogger(__name__)
+
+
+def create_dispatcher(services: Services) -> Dispatcher:
+    dispatcher = Dispatcher(storage=SQLiteStorage(services.database), events_isolation=SimpleEventIsolation())
+    dispatcher["services"] = services
+    dispatcher.include_router(create_router())
+    return dispatcher
+
+
+async def maintenance_loop(services: Services) -> None:
     while True:
-        await asyncio.sleep(86400)
         try:
-            logger.info("Запуск ежедневного обслуживания...")
-            
-            await cleanup_old_deleted_applications()
-            logger.info("Очистка старых анкет завершена.")
-            
-            apps = await get_7_day_reminder_applications()
-            for app in apps:
-                app_id, user_id, pet_name = app
-                try:
-                    text = (
-                        f"Напоминание об анкете #{app_id}\n\n"
-                        f"Прошла неделя с момента публикации анкеты «{pet_name}».\n"
-                        f"Удалось ли найти питомца?\n\n"
-                        f"Если животное нашлось, пожалуйста, закройте анкету в разделе «Мои анкеты», "
-                        f"чтобы волонтёры не тратили время зря."
-                    )
-                    await bot.send_message(user_id, text, parse_mode="HTML")
-                    logger.info(f"Отправлено напоминание пользователю {user_id} по анкете {app_id}")
-                except Exception as e:
-                    logger.error(f"Ошибка отправки напоминания {app_id}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Ошибка в фоновой задаче обслуживания: {e}")
+            if await services.maintenance.run_due():
+                logger.info("Daily maintenance completed")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Daily maintenance failed; retrying")
+        await asyncio.sleep(60)
 
-async def main():
-    aiogram_logger = logging.getLogger("aiogram.event")
-    aiogram_logger.addHandler(logging.FileHandler("logs/bot.log", encoding='utf-8'))
-    
-    await init_db()
-    
-    bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher()
-    
-    dp.include_router(admin.router)
-    dp.include_router(user.router)
-    
-    logger.info("Бот запущен!")
-    print("Бот запущен! Нажми Ctrl+C для остановки.")
-    
-    maintenance_task = asyncio.create_task(daily_maintenance_task(bot))
-    
+
+async def main(settings: Settings | None = None) -> None:
+    settings = settings or Settings.load()
+    configure_logging(settings.log_path)
+    services = Services.create(settings)
+    await migrate(services.database)
+    bot = Bot(token=settings.bot_token)
+    dispatcher = create_dispatcher(services)
+    worker = NotificationWorker(services.database, bot, settings)
+    tasks = [
+        asyncio.create_task(worker.run(), name="notifications"),
+        asyncio.create_task(maintenance_loop(services), name="maintenance"),
+    ]
+    logger.info("Bot started")
     try:
-        await dp.start_polling(bot)
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен пользователем.")
+        await dispatcher.start_polling(bot, close_bot_session=False)
     finally:
-        maintenance_task.cancel()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await dispatcher.fsm.close()
         await bot.session.close()
+        logger.info("Bot stopped")
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nБот остановлен.")
+        pass

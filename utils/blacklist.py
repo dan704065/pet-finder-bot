@@ -17,11 +17,6 @@ FORBIDDEN_PATTERNS = [
     r"\b\d{16}\b",    # номера карт
 ]
 
-# Маты (основные корни)
-PROFANITY_ROOTS = [
-    "хуй", "пизд", "еб", "бля", "сука"
-]
-
 # Замены букв для обхода
 REPLACEMENTS = {
     'а': ['a', '@', '4'],
@@ -64,29 +59,28 @@ def check_fraud_words(text: str) -> bool:
 def check_forbidden_patterns(text: str) -> bool:
     """Проверяет текст на ссылки и контакты"""
     for pattern in FORBIDDEN_PATTERNS:
-        if re.search(pattern, text):
+        if re.search(pattern, text, re.IGNORECASE):
             return True
     return False
 
 
 def check_profanity(text: str) -> bool:
-    """Проверяет текст на маты"""
-    text_lower = text.lower()
-    
-    # Убираем разделители
-    text_clean = re.sub(r'[\s\.\-_,;:!?]+', '', text_lower)
-    
-    # Заменяем обходы на оригинальные буквы
+    """Проверяет слова, не склеивая обычные слова и не запрещая «небольшой»."""
+    text_clean = text.lower().replace("ё", "е").replace("x", "х")
+    # Join deliberately separated single letters, but preserve normal word boundaries.
+    text_clean = re.sub(
+        r"(?<!\w)(?:[a-zа-я0-9@$][\s.\-_,;:!?]+)+[a-zа-я0-9@$](?!\w)",
+        lambda match: re.sub(r"[\s.\-_,;:!?]+", "", match.group()),
+        text_clean,
+    )
     for original, replacements in REPLACEMENTS.items():
         for repl in replacements:
             text_clean = text_clean.replace(repl, original)
-    
-    # Проверяем корни
-    for root in PROFANITY_ROOTS:
-        if root in text_clean:
-            return True
-    
-    return False
+    return bool(re.search(
+        r"\b(?:(?:за|на|по|вы|отъ?|при|до|пере|подъ?|разъ?|съ|объ|о|а|у|не|долбо)?"
+        r"(?:еб|пизд|ху[йяеюи])\w*|бля(?:д\w*|ть|т)?|сук(?:а|и|ой|у|ам|ами|ах))\b",
+        text_clean,
+    ))
 
 
 def moderate_text(text: str) -> tuple[bool, str]:
@@ -96,11 +90,11 @@ def moderate_text(text: str) -> tuple[bool, str]:
     """
     if check_fraud_words(text):
         return False, "Обнаружены подозрительные слова (возможно мошенничество)"
-    
+
     if check_forbidden_patterns(text):
         return False, "Обнаружены ссылки или контакты (запрещено)"
-    
+
     if check_profanity(text):
         return False, "Обнаружена нецензурная лексика"
-    
+
     return True, ""

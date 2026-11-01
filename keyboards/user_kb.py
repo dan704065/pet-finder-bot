@@ -1,8 +1,8 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import ADMIN_IDS
+from domain.districts import NOVOSIBIRSK_DISTRICTS
+from domain.models import Application
 
-def get_main_menu(user_id: int, in_admin_mode: bool = False):
-    is_admin = user_id in ADMIN_IDS
+def get_main_menu(*, in_admin_mode: bool = False, is_admin: bool = False):
     keyboard = [
         [InlineKeyboardButton(text="🐾 Я потерял животное", callback_data="lost_pet")],
         [InlineKeyboardButton(text="🔎 Я нашёл животное", callback_data="found_pet")],
@@ -11,13 +11,13 @@ def get_main_menu(user_id: int, in_admin_mode: bool = False):
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings")],
         [InlineKeyboardButton(text="💬 Поддержка", callback_data="support")]
     ]
-    
+
     if is_admin:
         if in_admin_mode:
             keyboard.append([InlineKeyboardButton(text="👤 Выйти в режим пользователя", callback_data="admin_exit_mode")])
         else:
             keyboard.append([InlineKeyboardButton(text="🛠 Войти в режим администратора", callback_data="admin_enter_mode")])
-            
+
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_cancel_only_keyboard():
@@ -42,7 +42,6 @@ def get_confirm_keyboard():
     ])
 
 def get_district_keyboard():
-    from database.db import NOVOSIBIRSK_DISTRICTS
     keyboard = []
     for i in range(0, len(NOVOSIBIRSK_DISTRICTS), 2):
         row = [InlineKeyboardButton(text=NOVOSIBIRSK_DISTRICTS[i], callback_data=f"district_{NOVOSIBIRSK_DISTRICTS[i]}")]
@@ -69,16 +68,16 @@ def get_swipe_end_keyboard():
         ]
     ])
 
-def get_application_list_keyboard(apps):
+def get_application_list_keyboard(apps: list[Application]):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     for app in apps:
         status_emoji = {
-            "active": "🟢", "paused": "🟡", "closed": "🔴", 
+            "active": "🟢", "paused": "🟡", "closed": "🔴",
             "moderation": "⏳", "rejected": "❌", "deleted": "🗑"
         }
-        status = status_emoji.get(app[8], "?")
+        status = status_emoji.get(app.status, "?")
         keyboard.inline_keyboard.append([
-            InlineKeyboardButton(text=f"{status} #{app[0]} {app[3]}", callback_data=f"my_app_manage_{app[0]}")
+            InlineKeyboardButton(text=f"{status} #{app.id} {app.pet_name}", callback_data=f"my_app_manage_{app.id}")
         ])
     keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu_back")])
     return keyboard
@@ -89,14 +88,14 @@ def get_application_manage_keyboard(app_id: int, status: str):
         keyboard.append([InlineKeyboardButton(text="⏸ Поставить на паузу", callback_data=f"app_pause_{app_id}")])
     elif status == "paused":
         keyboard.append([InlineKeyboardButton(text="▶️ Возобновить", callback_data=f"app_resume_{app_id}")])
-    
+
     if status in ["active", "paused"]:
         keyboard.append([InlineKeyboardButton(text="✅ Животное найдено", callback_data=f"app_found_{app_id}")])
         keyboard.append([InlineKeyboardButton(text="🗑 Удалить анкету", callback_data=f"app_delete_{app_id}")])
-    
+
     if status == "deleted":
         keyboard.append([InlineKeyboardButton(text="🗑 Удалить навсегда", callback_data=f"app_hard_delete_{app_id}")])
-    
+
     keyboard.append([InlineKeyboardButton(text="🔙 Назад к списку", callback_data="my_applications")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
