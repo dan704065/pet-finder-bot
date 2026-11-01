@@ -1,0 +1,25 @@
+# Конфигурация с секретными данными
+config.py
+config.example.py
+!config.example.py
+
+# База данных
+database.db
+*.db
+
+# Виртуальное окружение
+venv/
+.env
+
+# Логи
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
