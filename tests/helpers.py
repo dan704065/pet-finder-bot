@@ -135,7 +135,8 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
     def state(self, user_id=201):
         return self.dp.fsm.get_context(bot=self.bot, chat_id=user_id, user_id=user_id)
 
-    async def feed(self, user_id=201, *, data=None, text=None, photo=False, first_name="Tester", drain=True):
+    async def feed(self, user_id=201, *, data=None, text=None, photo=False, first_name="Tester", drain=True,
+                   location=None, callback_message=None):
         self.sequence += 1
         actor = {"id": user_id, "is_bot": False, "first_name": first_name}
         message = {
@@ -143,14 +144,16 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
             "chat": {"id": user_id, "type": "private"}, "from": actor,
         }
         if photo:
-            message["photo"] = [{"file_id": "photo", "file_unique_id": "unique", "width": 100, "height": 100}]
+            message["photo"] = [{"file_id": photo if isinstance(photo, str) else "photo", "file_unique_id": "unique", "width": 100, "height": 100}]
+        elif location:
+            message["location"] = location
         else:
             message["text"] = text or "Menu"
         payload = {"update_id": self.sequence}
         if data is not None:
             payload["callback_query"] = {
                 "id": str(self.sequence), "from": actor, "chat_instance": "test",
-                "message": message, "data": data,
+                "message": callback_message.model_dump() if callback_message else message, "data": data,
             }
         else:
             if text and text.startswith("/"):

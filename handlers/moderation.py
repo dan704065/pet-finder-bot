@@ -56,12 +56,14 @@ async def admin_moderate(callback: CallbackQuery, services: Services):
         ])
     rows.append([InlineKeyboardButton(text="🚫 Забанить автора", callback_data=f"admin_ban_user_{app.user_id}")])
     rows.extend(back_keyboard("admin_moderation_list").inline_keyboard)
-    await send_photo_text(callback.message, app.photo_id, application_card(app, moderator=True), InlineKeyboardMarkup(inline_keyboard=rows))
+    await send_photo_text(callback.message, app.photo_ids or app.photo_id, application_card(app, moderator=True), InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
 
 
 async def admin_approve(callback: CallbackQuery, services: Services):
-    await services.moderation.approve(callback.from_user.id, callback_id(callback))
+    app_id = callback_id(callback)
+    await services.moderation.approve(callback.from_user.id, app_id)
+    await send_text(callback.message.answer, f"✅ Анкета #{app_id} одобрена и опубликована.", keep=True)
     await admin_moderation_list(callback, services)
 
 
@@ -97,7 +99,7 @@ async def process_reason_input(message: Message, state: FSMContext, services: Se
     else:
         raise DomainError("Действие устарело. Откройте админку заново.")
     await state.clear()
-    await send_text(message.answer, text, reply_markup=main_menu(services, message.from_user.id, in_admin_mode=True))
+    await send_text(message.answer, text, reply_markup=main_menu(services, message.from_user.id, in_admin_mode=True), keep=True)
 
 
 async def admin_complaints_list(callback: CallbackQuery, services: Services):

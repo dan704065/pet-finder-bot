@@ -158,7 +158,7 @@ class BotRegressionTests(BotTestCase):
         await self.feed(301, text="Серебристый окрас <ошейник>")
         await self.feed(301, data="confirm_ok")
         self.assertEqual((await self.rows("SELECT count(*) FROM applications WHERE type='found'"))[0][0], 1)
-        self.assertTrue(any("&lt;Рыжик&gt;" in (getattr(m, "text", "") or "") for m in self.outgoing))
+        self.assertTrue(any("&lt;Рыжик&gt;" in (getattr(m, "text", "") or getattr(m, "caption", "") or "") for m in self.outgoing))
 
     async def test_input_limits_keep_user_on_current_step(self):
         cases = [
@@ -216,8 +216,8 @@ class BotRegressionTests(BotTestCase):
         await self.feed(data="district_Советский")
         self.assertEqual((await self.db.get_user(201)).district, "Советский")
         self.assertIsNone(await self.state().get_state())
-        self.assertTrue(any("Район изменён" in (getattr(m, "text", "") or "") for m in self.outgoing))
-        self.assertFalse(any("Приметы" in (getattr(m, "text", "") or "") for m in self.outgoing))
+        self.assertTrue(any("Район изменён" in (getattr(m, "text", "") or getattr(m, "caption", "") or "") for m in self.outgoing))
+        self.assertFalse(any("Приметы" in (getattr(m, "text", "") or getattr(m, "caption", "") or "") for m in self.outgoing))
 
     async def test_invalid_district_cannot_be_saved(self):
         await self.feed(text="/set_district")

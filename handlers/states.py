@@ -39,3 +39,8 @@ class InitialStates(StatesGroup):
 
 class SettingsStates(StatesGroup):
     choosing_district = State()
+
+
+class LocationStates(StatesGroup):
+    waiting_for_location = State()
+    confirming_district = State()

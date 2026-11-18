@@ -37,5 +37,7 @@ def validate_draft(draft: ApplicationDraft) -> None:
     validate_text(draft.description, DESCRIPTION_LIMIT, moderate=True)
     validate_text(draft.additional_info, ADDITIONAL_LIMIT, optional=True, moderate=True)
     validate_district(draft.district)
+    if len(draft.photo_ids) > 10 or any(not isinstance(photo, str) or not photo for photo in draft.photo_ids):
+        raise ValidationError("Можно прикрепить от 1 до 10 фотографий.")
     if not draft.photo_id or not draft.submission_key or len(draft.submission_key) > 128:
         raise ValidationError("Анкета не заполнена. Начните создание заново.")

@@ -272,7 +272,7 @@ class ArchitectureTests(BotTestCase):
 
     async def test_migrations_are_versioned_and_connections_enforce_foreign_keys(self):
         await self.db.init_db()
-        self.assertEqual(await self.rows("SELECT version FROM schema_migrations ORDER BY version"), [(1,), (2,)])
+        self.assertEqual(await self.rows("SELECT version FROM schema_migrations ORDER BY version"), [(1,), (2,), (3,)])
         async with self.services.database.connection() as connection:
             async with connection.execute("PRAGMA foreign_keys") as cursor:
                 self.assertEqual((await cursor.fetchone())[0], 1)

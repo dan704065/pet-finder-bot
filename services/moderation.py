@@ -14,12 +14,27 @@ from domain.validation import REASON_LIMIT, validate_text
 from repositories.session import Repositories
 from services.access import require_admin
 from settings import Settings
+from services.notification_payloads import submission_payload
 
 
 class ModerationService:
     def __init__(self, database: Database, settings: Settings):
         self.database = database
         self.settings = settings
+
+    async def queue_pending_requests(self) -> None:
+        """Also notify newly configured moderators about the existing backlog."""
+        if not self.settings.admin_ids:
+            return
+        async with self.database.connection(write=True) as connection:
+            repositories = Repositories(connection)
+            async with connection.execute("SELECT id FROM applications WHERE status = 'moderation'") as cursor:
+                ids = [row[0] for row in await cursor.fetchall()]
+            for app_id in ids:
+                app = await repositories.applications.get(app_id)
+                for admin_id in self.settings.admin_ids:
+                    await repositories.outbox.enqueue(admin_id, NotificationKind.SUBMITTED, submission_payload(app),
+                        event_key=f"submitted:{app.id}:{admin_id}", application_id=app.id, subject_user_id=app.user_id)
 
     async def application(self, actor_id: int, application_id: int) -> Application:
         require_admin(self.settings, actor_id)

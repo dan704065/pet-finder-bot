@@ -12,6 +12,7 @@ from utils.messages import h
 class RenderedNotification:
     text: str
     keyboard: InlineKeyboardMarkup | None = None
+    photo_ids: tuple[str, ...] = ()
 
 
 def _keyboard(label, callback):
@@ -26,8 +27,14 @@ def render_notification(notification: Notification, settings: Settings) -> Rende
         app_kind = "🐾 Потерялось" if data["kind"] == "lost" else "🔍 Найдено"
         return RenderedNotification(
             f"🆕 <b>Новая анкета #{app_id}</b>\n\n📋 <b>Тип:</b> {app_kind}\n"
-            f"🏷 <b>Кличка:</b> {h(data['pet_name'])}\n📍 <b>Район:</b> {h(data['district'])}\n\n⏳ Требуется модерация.",
-            _keyboard("📋 Перейти к модерации", f"admin_moderate_{app_id}"),
+            f"🏷 <b>Кличка:</b> {h(data['pet_name'])}\n📍 <b>Район:</b> {h(data['district'])}\n"
+            f"📝 <b>Описание:</b>\n{h(data.get('description', ''))}\n"
+            f"💬 <b>Дополнительно:</b> {h(data.get('additional_info') or 'нет')}\n\n⏳ Требуется модерация.",
+            InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Одобрить", callback_data=f"admin_approve_{app_id}", style="success"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_{app_id}", style="danger"),
+            ], [InlineKeyboardButton(text="📋 Подробнее", callback_data=f"admin_moderate_{app_id}")]]),
+            tuple(data.get("photo_ids", ())),
         )
     if kind == NotificationKind.APPROVED:
         return RenderedNotification(f"✅ <b>Анкета #{app_id} одобрена</b>\n\nВаша анкета опубликована и теперь видна волонтёрам.")

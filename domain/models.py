@@ -76,6 +76,7 @@ class Application:
     deleted_at: str | None
     created_at: str
     submission_key: str | None
+    photo_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ class ApplicationDraft:
     additional_info: str
     photo_id: str
     submission_key: str
+    photo_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import time
+from functools import partial
+from types import SimpleNamespace
 
 from aiogram import Bot
 from aiogram.exceptions import (
@@ -14,7 +16,7 @@ from database.connection import Database
 from presentation.notifications import render_notification
 from repositories.outbox import OutboxRepository
 from settings import Settings
-from utils.messages import send_text
+from utils.messages import send_text, send_photo_text
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,15 @@ class NotificationWorker:
         delay = min(3600, 2 ** min(notification.attempts, 12))
         try:
             rendered = render_notification(notification, self.settings)
-            await send_text(self.bot.send_message, rendered.text, chat_id=notification.recipient_id, reply_markup=rendered.keyboard, parse_mode="HTML")
+            if rendered.photo_ids:
+                target = SimpleNamespace(
+                    answer=partial(self.bot.send_message, chat_id=notification.recipient_id),
+                    answer_photo=partial(self.bot.send_photo, chat_id=notification.recipient_id),
+                    answer_media_group=partial(self.bot.send_media_group, chat_id=notification.recipient_id),
+                )
+                await send_photo_text(target, rendered.photo_ids, rendered.text, rendered.keyboard)
+            else:
+                await send_text(self.bot.send_message, rendered.text, chat_id=notification.recipient_id, reply_markup=rendered.keyboard, parse_mode="HTML")
         except TelegramRetryAfter as exc:
             error, delay = exc, max(1, exc.retry_after)
             rate_limited = True

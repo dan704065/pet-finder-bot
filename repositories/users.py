@@ -58,5 +58,6 @@ class UserRepository:
             await self.connection.execute("UPDATE applications SET responses = (SELECT COUNT(*) FROM responses WHERE application_id = ?) WHERE id = ?", (application_id, application_id))
         await self.connection.execute("DELETE FROM complaints WHERE reporter_id = ? OR application_id IN (SELECT id FROM applications WHERE user_id = ?)", (user_id, user_id))
         await self.connection.execute("DELETE FROM dialog_sessions WHERE user_id = ?", (user_id,))
+        await self.connection.execute("DELETE FROM chat_screens WHERE chat_id = ?", (user_id,))
         await self.connection.execute("DELETE FROM applications WHERE user_id = ?", (user_id,))
         await self.connection.execute("DELETE FROM users WHERE user_id = ?", (user_id,))

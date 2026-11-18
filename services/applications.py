@@ -11,6 +11,7 @@ from domain.validation import RESPONSE_LIMIT, validate_draft, validate_district,
 from repositories.session import Repositories
 from services.access import require_user
 from settings import Settings
+from services.notification_payloads import submission_payload
 
 
 class ApplicationService:
@@ -27,10 +28,8 @@ class ApplicationService:
             if created:
                 await repositories.audit.add(actor_id, "Создана анкета", f"Тип: {draft.kind.value}, ID: {application.id}", application_id=application.id)
                 for admin_id in self.settings.admin_ids:
-                    await repositories.outbox.enqueue(admin_id, NotificationKind.SUBMITTED, {
-                        "application_id": application.id, "kind": draft.kind.value,
-                        "pet_name": draft.pet_name, "district": draft.district,
-                    }, event_key=f"submitted:{application.id}:{admin_id}", application_id=application.id, subject_user_id=actor_id)
+                    await repositories.outbox.enqueue(admin_id, NotificationKind.SUBMITTED, submission_payload(application),
+                        event_key=f"submitted:{application.id}:{admin_id}", application_id=application.id, subject_user_id=actor_id)
             return application
 
     async def owned(self, actor_id: int, application_id: int) -> Application:

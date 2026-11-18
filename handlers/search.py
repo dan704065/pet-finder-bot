@@ -95,7 +95,7 @@ async def show_next_card(message, user_id, state, services: Services):
     viewed_apps.append(app_id)
     await state.update_data(viewed_apps=viewed_apps)
 
-    await send_photo_text(message, app.photo_id, application_card(app), get_swipe_keyboard(app_id))
+    await send_photo_text(message, app.photo_ids or app.photo_id, application_card(app), get_swipe_keyboard(app_id))
 
     await state.set_state(SwipeStates.swiping)
     await state.update_data(current_app_id=app_id)
@@ -159,7 +159,7 @@ async def write_response(message: Message, state: FSMContext, services: Services
         return
     text = "✅ <b>Спасибо!</b>\n\nВаш отклик принят."
     await state.clear()
-    await send_text(message.answer, text, reply_markup=main_menu(services, message.from_user.id), parse_mode="HTML")
+    await send_text(message.answer, text, reply_markup=main_menu(services, message.from_user.id), parse_mode="HTML", keep=True)
 
 
 async def write_response_invalid(message: Message, services: Services):
@@ -175,11 +175,10 @@ async def notify_show(callback: CallbackQuery, state: FSMContext, services: Serv
     await state.clear()
     await state.update_data(search_mode="city", viewed_apps=[app_id])
     if app:
-        await safe_send(callback, f"📋 Анкета #{app_id}", parse_mode="HTML")
         await state.update_data(current_app_id=app_id)
         await state.set_state(SwipeStates.swiping)
 
-        await send_photo_text(callback.message, app.photo_id, application_card(app), get_swipe_keyboard(app.id))
+        await send_photo_text(callback.message, app.photo_ids or app.photo_id, application_card(app), get_swipe_keyboard(app.id))
 
     await callback.answer()
 

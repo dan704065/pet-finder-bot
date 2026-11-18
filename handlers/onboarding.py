@@ -1,10 +1,10 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
 from handlers.common import main_menu, get_greeting, read_district, check_banned
-from handlers.states import InitialStates
+from handlers.states import InitialStates, LocationStates
 from keyboards.user_kb import get_district_keyboard
 from presentation.texts import DISCLAIMER_TEXT
 from services.container import Services
@@ -12,6 +12,8 @@ from utils.messages import h, safe_send, send_text
 
 
 async def user_start(message: Message, state: FSMContext, services: Services):
+    if await state.get_state() in {LocationStates.waiting_for_location.state, LocationStates.confirming_district.state}:
+        await send_text(message.answer, "Открываю меню.", reply_markup=ReplyKeyboardRemove())
     await state.clear()
     user = await services.accounts.get(message.from_user.id)
     if user is None:
@@ -45,9 +47,11 @@ async def agree_pd(callback: CallbackQuery, state: FSMContext, services: Service
         text = "📍 Для более эффективного поиска укажите ваш район. Это позволит получать уведомления о животных рядом.\n\nВы можете указать район сейчас или сделать это позже в Настройках."
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Указать район", callback_data="prompt_initial_district")],
+            [InlineKeyboardButton(text="📍 Не знаю, подскажите мне", callback_data="detect_district")],
             [InlineKeyboardButton(text="⏭ Пропустить", callback_data="skip_initial_district")]
         ])
         await safe_send(callback, text, reply_markup=kb, parse_mode="HTML")
+        await state.set_state(InitialStates.waiting_for_district)
         await callback.answer()
         return
 
@@ -79,7 +83,7 @@ async def show_main_menu_after_consent(callback: CallbackQuery, services: Servic
     name = callback.from_user.first_name or ""
     greeting_text = f"{greeting}, <b>{h(name)}</b>!" if name else f"{greeting}!"
     text = f"👋 <b>{greeting_text}</b>\n\n{DISCLAIMER_TEXT}"
-    await send_text(callback.message.answer, text, parse_mode="HTML")
+    await send_text(callback.message.answer, text, parse_mode="HTML", keep=True)
     await send_text(callback.message.answer, "✅ Выберите действие:", reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML")
     await callback.answer()
 

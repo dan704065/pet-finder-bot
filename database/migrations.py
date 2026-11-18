@@ -83,7 +83,16 @@ async def _durable_workflows(db):
         queued_at INTEGER NOT NULL)""")
 
 
-MIGRATIONS = ((1, "initial_schema", _initial_schema), (2, "durable_workflows", _durable_workflows))
+async def _chat_screens_and_photos(db):
+    await db.execute("ALTER TABLE applications ADD COLUMN photo_ids TEXT NOT NULL DEFAULT '[]'")
+    await db.execute("""CREATE TABLE chat_screens (
+        chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+        durable INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(chat_id, message_id))""")
+
+
+MIGRATIONS = ((1, "initial_schema", _initial_schema), (2, "durable_workflows", _durable_workflows),
+              (3, "chat_screens_and_photos", _chat_screens_and_photos))
 
 
 async def migrate(database: Database) -> None:

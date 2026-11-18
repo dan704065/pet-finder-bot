@@ -40,6 +40,7 @@ async def main(settings: Settings | None = None) -> None:
     configure_logging(settings.log_path)
     services = Services.create(settings)
     await migrate(services.database)
+    await services.moderation.queue_pending_requests()
     bot = Bot(token=settings.bot_token)
     dispatcher = create_dispatcher(services)
     worker = NotificationWorker(services.database, bot, settings)

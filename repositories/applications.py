@@ -1,3 +1,5 @@
+import json
+
 from domain.models import Application, ApplicationDraft, ApplicationKind, ApplicationStatus
 
 
@@ -11,6 +13,7 @@ def application_from_row(row) -> Application | None:
         status=ApplicationStatus(row["status"]), reject_reason=row["reject_reason"] or "",
         views=row["views"] or 0, responses=row["responses"] or 0, deleted_at=row["deleted_at"],
         created_at=str(row["created_at"] or ""), submission_key=row["submission_key"],
+        photo_ids=tuple(json.loads(row["photo_ids"])) or ((row["photo_id"],) if row["photo_id"] else ()),
     )
 
 
@@ -24,9 +27,10 @@ class ApplicationRepository:
 
     async def create(self, user_id: int, draft: ApplicationDraft) -> tuple[Application, bool]:
         cursor = await self.connection.execute("""INSERT INTO applications
-            (user_id, type, pet_name, description, district, additional_info, photo_id, submission_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_key) DO NOTHING""",
-            (user_id, draft.kind.value, draft.pet_name, draft.description, draft.district, draft.additional_info, draft.photo_id, draft.submission_key))
+            (user_id, type, pet_name, description, district, additional_info, photo_id, submission_key, photo_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_key) DO NOTHING""",
+            (user_id, draft.kind.value, draft.pet_name, draft.description, draft.district, draft.additional_info, draft.photo_id, draft.submission_key,
+             json.dumps(draft.photo_ids or (draft.photo_id,))))
         created = cursor.rowcount == 1
         async with self.connection.execute("SELECT * FROM applications WHERE submission_key = ? AND user_id = ?", (draft.submission_key, user_id)) as existing:
             application = application_from_row(await existing.fetchone())

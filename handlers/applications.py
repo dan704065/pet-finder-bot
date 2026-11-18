@@ -1,6 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import StateFilter
 from uuid import uuid4
 
 from domain.models import ApplicationDraft, ApplicationKind, ApplicationStatus
@@ -37,8 +38,7 @@ async def lost_pet(callback: CallbackQuery, state: FSMContext, services: Service
     text = (
         "🐾 <b>Я потерял животное</b>\n\n"
         "<b>Шаг 1 из 5</b>\n\n"
-        "📸 Отправьте фото вашего питомца.\n\n"
-        "💡 Если что-то пошло не так — нажмите /start"
+        "📸 Отправьте от 1 до 10 фото вашего питомца, можно альбомом."
     )
     await safe_send(callback, text, reply_markup=get_cancel_only_keyboard(), parse_mode="HTML")
     await state.set_state(CreateApplication.waiting_for_photo)
@@ -47,7 +47,7 @@ async def lost_pet(callback: CallbackQuery, state: FSMContext, services: Service
 
 async def process_photo(message: Message, state: FSMContext, services: Services):
     if await check_banned(message.from_user.id, message, services=services): return
-    await state.update_data(photo_id=message.photo[-1].file_id)
+    await state.update_data(photo_id=message.photo[-1].file_id, photo_ids=[message.photo[-1].file_id])
     text = "🐾 <b>Я потерял животное</b>\n\n<b>Шаг 2 из 5</b>\n\n🏷 Как зовут вашего питомца?"
     await send_text(message.answer, text, reply_markup=get_back_cancel_keyboard(), parse_mode="HTML")
     await state.set_state(CreateApplication.waiting_for_name)
@@ -56,6 +56,19 @@ async def process_photo(message: Message, state: FSMContext, services: Services)
 async def process_photo_invalid(message: Message, services: Services):
     text = "⚠️ <b>Неверный формат</b>\n\n📸 Пожалуйста, отправьте фотографию питомца."
     await send_text(message.answer, text, reply_markup=get_cancel_only_keyboard(), parse_mode="HTML")
+
+
+async def add_draft_photo(message: Message, state: FSMContext, services: Services):
+    if await check_banned(message.from_user.id, message, services=services): return
+    data = await state.get_data()
+    photos = list(data.get("photo_ids") or [data["photo_id"]])
+    photo = message.photo[-1].file_id
+    if photo not in photos:
+        if len(photos) >= 10:
+            await send_text(message.answer, "Можно прикрепить до 10 фото. Продолжите заполнение анкеты.")
+            return
+        photos.append(photo)
+        await state.update_data(photo_ids=photos)
 
 
 async def process_name(message: Message, state: FSMContext, services: Services):
@@ -143,7 +156,7 @@ async def process_additional(message: Message, state: FSMContext, services: Serv
         f"💬 <b>Дополнительная информация:</b> <i>{h(data['additional_info'] or 'нет')}</i>\n\n"
         "Всё верно?"
     )
-    await send_text(message.answer, preview, reply_markup=get_confirm_keyboard(), parse_mode="HTML")
+    await send_photo_text(message, data.get("photo_ids") or data.get("photo_id"), preview, get_confirm_keyboard())
     await state.set_state(CreateApplication.waiting_for_confirm)
 
 
@@ -158,7 +171,7 @@ async def confirm_ok(callback: CallbackQuery, state: FSMContext, services: Servi
     app = await services.applications.submit(callback.from_user.id, ApplicationDraft(
         kind=ApplicationKind.LOST, pet_name=data["pet_name"], description=data["description"],
         district=data["district"], additional_info=data["additional_info"],
-        photo_id=data["photo_id"], submission_key=data["submission_key"],
+        photo_id=data["photo_id"], submission_key=data["submission_key"], photo_ids=tuple(data.get("photo_ids", [data["photo_id"]])),
     ))
     app_id = app.id
     await state.clear()
@@ -170,7 +183,7 @@ async def confirm_ok(callback: CallbackQuery, state: FSMContext, services: Servi
         "Вы можете вернуться в главное меню или создать ещё одну анкету."
     )
 
-    await send_text(callback.message.answer, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML")
+    await send_text(callback.message.answer, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML", keep=True)
     await callback.answer("Отправлено!", show_alert=True)
 
 
@@ -190,8 +203,7 @@ async def found_pet(callback: CallbackQuery, state: FSMContext, services: Servic
     text = (
         "🔍 <b>Я нашёл животное</b>\n\n"
         "<b>Шаг 1 из 4</b>\n\n"
-        "📸 Отправьте фото найденного питомца.\n\n"
-        "💡 Нажмите /start для сброса"
+        "📸 Отправьте от 1 до 10 фото найденного питомца, можно альбомом."
     )
     await safe_send(callback, text, reply_markup=get_cancel_only_keyboard(), parse_mode="HTML")
     await state.set_state(FoundPet.waiting_for_photo)
@@ -200,7 +212,7 @@ async def found_pet(callback: CallbackQuery, state: FSMContext, services: Servic
 
 async def found_photo(message: Message, state: FSMContext, services: Services):
     if await check_banned(message.from_user.id, message, services=services): return
-    await state.update_data(photo_id=message.photo[-1].file_id)
+    await state.update_data(photo_id=message.photo[-1].file_id, photo_ids=[message.photo[-1].file_id])
     text = "🔍 <b>Я нашёл животное</b>\n\n<b>Шаг 2 из 4</b>\n\n📍 Выберите район Новосибирска:"
     await send_text(message.answer, text, reply_markup=get_district_keyboard(), parse_mode="HTML")
     await state.set_state(FoundPet.waiting_for_district)
@@ -258,7 +270,7 @@ async def found_description(message: Message, state: FSMContext, services: Servi
         f"📝 <b>Описание:</b>\n<i>{h(data['found_description'])}</i>\n\n"
         "Всё верно?"
     )
-    await send_text(message.answer, preview, reply_markup=get_confirm_keyboard(), parse_mode="HTML")
+    await send_photo_text(message, data.get("photo_ids") or data.get("photo_id"), preview, get_confirm_keyboard())
     await state.set_state(FoundPet.waiting_for_confirm)
 
 
@@ -272,7 +284,7 @@ async def found_confirm_ok(callback: CallbackQuery, state: FSMContext, services:
     data = await state.get_data()
     app = await services.applications.submit(callback.from_user.id, ApplicationDraft(
         kind=ApplicationKind.FOUND, pet_name="Неизвестно", description=data["found_description"],
-        district=data["district"], additional_info="", photo_id=data["photo_id"], submission_key=data["submission_key"],
+        district=data["district"], additional_info="", photo_id=data["photo_id"], submission_key=data["submission_key"], photo_ids=tuple(data.get("photo_ids", [data["photo_id"]])),
     ))
     app_id = app.id
     await state.clear()
@@ -284,7 +296,7 @@ async def found_confirm_ok(callback: CallbackQuery, state: FSMContext, services:
         "Вы можете вернуться в главное меню или создать ещё одну анкету."
     )
 
-    await send_text(callback.message.answer, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML")
+    await send_text(callback.message.answer, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML", keep=True)
     await callback.answer()
 
 
@@ -316,7 +328,7 @@ async def my_applications(callback: CallbackQuery, services: Services):
 async def my_app_manage(callback: CallbackQuery, services: Services):
     app_id = callback_id(callback)
     app = await services.applications.owned(callback.from_user.id, app_id)
-    await send_photo_text(callback.message, app.photo_id, application_card(app, owner=True), get_application_manage_keyboard(app.id, app.status))
+    await send_photo_text(callback.message, app.photo_ids or app.photo_id, application_card(app, owner=True), get_application_manage_keyboard(app.id, app.status))
     await callback.answer()
 
 
@@ -346,7 +358,7 @@ async def app_found(callback: CallbackQuery, services: Services):
         "Животное нашлось! Анкета закрыта.\n\n"
         "Спасибо, что воспользовались нашим сервисом."
     )
-    await safe_send(callback, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML")
+    await safe_send(callback, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML", keep=True)
     await callback.answer("Поздравляем!", show_alert=True)
 
 
@@ -381,12 +393,16 @@ async def app_confirm_hard_delete(callback: CallbackQuery, services: Services):
     await services.applications.delete_permanently(callback.from_user.id, app_id)
 
     text = "🗑 <b>Анкета удалена</b>\n\nАнкета полностью удалена."
-    await safe_send(callback, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML")
+    await safe_send(callback, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML", keep=True)
     await callback.answer("Удалено", show_alert=True)
 
 
 def create_router() -> Router:
     router = Router(name="applications")
+    router.message.register(add_draft_photo, F.photo,
+        StateFilter(CreateApplication.waiting_for_name, CreateApplication.waiting_for_description,
+                    CreateApplication.waiting_for_district, CreateApplication.waiting_for_additional,
+                    FoundPet.waiting_for_district, FoundPet.waiting_for_description))
     router.callback_query.register(lost_pet, F.data == 'lost_pet')
     router.message.register(process_photo, CreateApplication.waiting_for_photo, F.photo)
     router.message.register(process_photo_invalid, CreateApplication.waiting_for_photo)

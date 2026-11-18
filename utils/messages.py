@@ -3,8 +3,10 @@
 from html import escape
 from html.parser import HTMLParser
 
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
+from aiogram.types import InputMediaPhoto
+from utils.screens import record_screen, screen_scope
 from domain.errors import ValidationError
 from domain.validation import (
     NAME_LIMIT, DESCRIPTION_LIMIT, ADDITIONAL_LIMIT, RESPONSE_LIMIT, SUPPORT_LIMIT, REASON_LIMIT,
@@ -47,55 +49,65 @@ def split_text(text: str, limit: int = 4096) -> list[str]:
     return chunks or [text]
 
 
-async def send_text(send, text: str, reply_markup=None, parse_mode=None, **kwargs):
+async def send_text(send, text: str, reply_markup=None, parse_mode=None, *, keep=False, append=False, **kwargs):
     plain = plain_text(text, parse_mode)
     if text_length(plain) <= 4096:
-        return await send(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
+        return record_screen(await send(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs), keep=keep, append=append)
     # Oversized legacy records remain readable without splitting HTML tags/entities.
     chunks = split_text(plain)
     result = None
+    messages = []
     for index, chunk in enumerate(chunks):
         result = await send(
             text=chunk, parse_mode=None,
             reply_markup=reply_markup if index == len(chunks) - 1 else None,
             **kwargs,
         )
+        messages.append(result)
+    record_screen(messages, keep=keep, append=append)
     return result
 
 
-async def safe_send(callback_or_message, text: str, reply_markup=None, parse_mode=None):
+async def safe_send(callback_or_message, text: str, reply_markup=None, parse_mode=None, *, keep=False):
     if not isinstance(callback_or_message, CallbackQuery):
-        return await send_text(callback_or_message.answer, text, reply_markup, parse_mode)
+        return await send_text(callback_or_message.answer, text, reply_markup, parse_mode, keep=keep)
     message = callback_or_message.message
-    limit = 1024 if message.photo else 4096
-    if text_length(plain_text(text, parse_mode)) <= limit:
+    scope = screen_scope.get()
+    # Screens with photos are replaced, so old photos never accompany unrelated text.
+    if not message.photo and not (scope and scope.durable_source) and text_length(plain_text(text, parse_mode)) <= 4096:
         try:
-            if message.photo:
-                return await message.edit_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
-            return await message.edit_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+            return record_screen(await message.edit_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode), keep=keep)
         except TelegramBadRequest as exc:
             if "message is not modified" in exc.message.lower():
+                record_screen(message, keep=keep)
                 return None
-    return await send_text(message.answer, text, reply_markup, parse_mode)
+    return await send_text(message.answer, text, reply_markup, parse_mode, keep=keep)
 
 
-async def send_photo_text(message, photo, text: str, reply_markup=None):
-    if photo:
+async def send_photo_text(message, photo, text: str, reply_markup=None, *, keep=False):
+    photos = list(photo) if isinstance(photo, (list, tuple)) else ([photo] if photo else [])
+    if len(photos) > 1:
+        # Telegram albums cannot carry inline keyboards. Keep all photos together
+        # and put the text/actions immediately below the album.
+        album = await message.answer_media_group(media=[InputMediaPhoto(media=pid) for pid in photos])
+        record_screen(album, keep=keep)
+        return await send_text(message.answer, text, reply_markup, "HTML", keep=keep, append=True)
+    if photos:
         try:
             if text_length(plain_text(text, "HTML")) <= 1024:
-                return await message.answer_photo(
-                    photo=photo, caption=text, reply_markup=reply_markup, parse_mode="HTML",
-                )
-            await message.answer_photo(photo=photo)
-        except TelegramAPIError:
+                return record_screen(await message.answer_photo(
+                    photo=photos[0], caption=text, reply_markup=reply_markup, parse_mode="HTML",
+                ), keep=keep)
+            record_screen(await message.answer_photo(photo=photos[0]), keep=keep)
+        except TelegramBadRequest:
             pass
-    return await send_text(message.answer, text, reply_markup, "HTML")
+    return await send_text(message.answer, text, reply_markup, "HTML", keep=keep, append=bool(photos))
 
 
 async def validate_text(message, limit: int) -> bool:
     try:
         validate_content(message.text, limit)
     except ValidationError as exc:
-        await message.answer(str(exc))
+        await send_text(message.answer, str(exc))
         return False
     return True

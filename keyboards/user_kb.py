@@ -49,6 +49,7 @@ def get_district_keyboard():
             row.append(InlineKeyboardButton(text=NOVOSIBIRSK_DISTRICTS[i+1], callback_data=f"district_{NOVOSIBIRSK_DISTRICTS[i+1]}"))
         keyboard.append(row)
     keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
+    keyboard.insert(0, [InlineKeyboardButton(text="📍 Не знаю, подскажите мне", callback_data="detect_district")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_swipe_keyboard(app_id: int):
@@ -123,10 +124,13 @@ def get_help_search_keyboard():
     ])
 
 def get_settings_keyboard(current_mode: str):
-    def check(mode): return "✅ " if current_mode == mode else "○ "
+    def button(mode, text):
+        selected = current_mode == mode
+        return InlineKeyboardButton(text=f"{'●' if selected else '○'} {text}",
+                                    callback_data=f"set_notif_{mode}", style="primary" if selected else None)
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{check('district')}Только мой район", callback_data="set_notif_district")],
-        [InlineKeyboardButton(text=f"{check('city')}Со всего Новосибирска", callback_data="set_notif_city")],
-        [InlineKeyboardButton(text=f"{check('none')}Отключить уведомления", callback_data="set_notif_none")],
+        [button('district', 'Только мой район')],
+        [button('city', 'Со всего Новосибирска')],
+        [button('none', 'Отключить уведомления')],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu_back")]
     ])

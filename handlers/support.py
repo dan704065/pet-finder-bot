@@ -58,7 +58,7 @@ async def support_message(message: Message, state: FSMContext, services: Service
 
     text = "✅ <b>Обращение принято</b>\n\nСпасибо! Мы рассмотрим ваше обращение."
     await state.clear()
-    await send_text(message.answer, text, reply_markup=main_menu(services, message.from_user.id), parse_mode="HTML")
+    await send_text(message.answer, text, reply_markup=main_menu(services, message.from_user.id), parse_mode="HTML", keep=True)
 
 
 async def support_message_invalid(message: Message, services: Services):

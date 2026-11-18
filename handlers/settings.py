@@ -1,10 +1,10 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from handlers.common import main_menu, read_district, check_banned
-from handlers.states import SettingsStates
+from handlers.states import SettingsStates, LocationStates
 from keyboards.user_kb import get_district_keyboard, get_settings_keyboard
 from services.container import Services
 from utils.messages import h, safe_send, send_text
@@ -12,6 +12,9 @@ from utils.messages import h, safe_send, send_text
 
 async def set_district_cmd(message: Message, state: FSMContext, services: Services):
     if await check_banned(message.from_user.id, message, services=services): return
+    if await state.get_state() == LocationStates.waiting_for_location.state:
+        await send_text(message.answer, "Выбор района вручную.", reply_markup=ReplyKeyboardRemove())
+    await state.clear()
     text = "📍 <b>Смена района</b>\n\nВыберите ваш район:"
     await send_text(message.answer, text, reply_markup=get_district_keyboard(), parse_mode="HTML")
     await state.set_state(SettingsStates.choosing_district)
@@ -20,11 +23,13 @@ async def set_district_cmd(message: Message, state: FSMContext, services: Servic
 
 async def delete_my_data_cmd(message: Message, state: FSMContext, services: Services):
     if await check_banned(message.from_user.id, message, services=services): return
+    if await state.get_state() == LocationStates.waiting_for_location.state:
+        await send_text(message.answer, "Закрываю запрос геопозиции.", reply_markup=ReplyKeyboardRemove())
     await state.clear()
     await services.accounts.delete_data(message.from_user.id)
 
     text = "🗑 <b>Данные удалены</b>\n\nВсе ваши данные удалены.\nНажмите /start для начала."
-    await send_text(message.answer, text, parse_mode="HTML")
+    await send_text(message.answer, text, parse_mode="HTML", keep=True)
 
 
 async def open_settings(callback: CallbackQuery, services: Services):
@@ -55,20 +60,7 @@ async def set_notification_mode_cb(callback: CallbackQuery, services: Services):
         return
     await services.accounts.set_notifications(callback.from_user.id, mode)
 
-    mode_text = {
-        "district": "Только мой район",
-        "city": "Со всего Новосибирска",
-        "none": "Отключить уведомления"
-    }.get(mode, "Отключить уведомления")
-
-    text = f"✅ Настройки сохранены.\n🔔 Уведомления: {mode_text}."
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="open_settings")]
-    ])
-
-    await safe_send(callback, text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
+    await open_settings(callback, services)
 
 
 async def save_district_settings(callback: CallbackQuery, state: FSMContext, services: Services):

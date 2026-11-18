@@ -4,6 +4,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery
 
 from domain.errors import DomainError
+from utils.messages import send_text
 
 
 logger = logging.getLogger(__name__)
@@ -17,5 +18,5 @@ class DomainErrorMiddleware(BaseMiddleware):
             if isinstance(event, CallbackQuery):
                 await event.answer(str(exc), show_alert=True)
             else:
-                await event.answer(str(exc))
+                await send_text(event.answer, str(exc))
             return None
