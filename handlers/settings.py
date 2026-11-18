@@ -1,19 +1,20 @@
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
-from handlers.common import main_menu, read_district, check_banned
-from handlers.states import SettingsStates, LocationStates
+from handlers.common import check_access, main_menu, read_district
+from handlers.states import LocationStates, SettingsStates
 from keyboards.user_kb import get_district_keyboard, get_settings_keyboard
 from services.container import Services
-from utils.messages import h, safe_send, send_text
+from utils.messages import h, safe_answer, safe_send, send_text
 
 
 async def set_district_cmd(message: Message, state: FSMContext, services: Services):
-    if await check_banned(message.from_user.id, message, services=services): return
-    if await state.get_state() == LocationStates.waiting_for_location.state:
+    if await state.get_state() in {LocationStates.waiting_for_location.state, LocationStates.confirming_district.state}:
         await send_text(message.answer, "Выбор района вручную.", reply_markup=ReplyKeyboardRemove())
+    if await check_access(message.from_user.id, message, services=services, state=state):
+        return
     await state.clear()
     text = "📍 <b>Смена района</b>\n\nВыберите ваш район:"
     await send_text(message.answer, text, reply_markup=get_district_keyboard(), parse_mode="HTML")
@@ -22,25 +23,25 @@ async def set_district_cmd(message: Message, state: FSMContext, services: Servic
 
 
 async def delete_my_data_cmd(message: Message, state: FSMContext, services: Services):
-    if await check_banned(message.from_user.id, message, services=services): return
-    if await state.get_state() == LocationStates.waiting_for_location.state:
+    if await state.get_state() in {LocationStates.waiting_for_location.state, LocationStates.confirming_district.state}:
         await send_text(message.answer, "Закрываю запрос геопозиции.", reply_markup=ReplyKeyboardRemove())
     await state.clear()
     await services.accounts.delete_data(message.from_user.id)
 
-    text = "🗑 <b>Данные удалены</b>\n\nВсе ваши данные удалены.\nНажмите /start для начала."
+    text = "🗑 <b>Данные удалены</b>\n\nВсе ваши персональные данные удалены.\nНажмите /start для начала."
     await send_text(message.answer, text, parse_mode="HTML", keep=True)
 
 
-async def open_settings(callback: CallbackQuery, services: Services):
-    if await check_banned(callback.from_user.id, callback, services=services): return
+async def open_settings(callback: CallbackQuery, state: FSMContext, services: Services):
+    if await check_access(callback.from_user.id, callback, services=services, state=state):
+        return
     user = await services.accounts.get(callback.from_user.id)
     mode = user.notification_mode if user else "none"
 
     mode_text = {
         "district": "Только мой район",
         "city": "Со всего Новосибирска",
-        "none": "Отключить уведомления"
+        "none": "Отключить уведомления",
     }.get(mode, "Отключить уведомления")
 
     text = (
@@ -49,40 +50,39 @@ async def open_settings(callback: CallbackQuery, services: Services):
         "Выберите желаемый режим уведомлений:"
     )
     await safe_send(callback, text, reply_markup=get_settings_keyboard(mode), parse_mode="HTML")
-    await callback.answer()
+    await safe_answer(callback)
 
 
-async def set_notification_mode_cb(callback: CallbackQuery, services: Services):
-    if await check_banned(callback.from_user.id, callback, services=services): return
-    mode = callback.data.replace("set_notif_", "")
+async def set_notification_mode_cb(callback: CallbackQuery, state: FSMContext, services: Services):
+    if await check_access(callback.from_user.id, callback, services=services, state=state):
+        return
+    mode = callback.data.removeprefix("set_notif_")
     if mode not in {"district", "city", "none"}:
-        await callback.answer("Неизвестный режим уведомлений", show_alert=True)
+        await safe_answer(callback, "Неизвестный режим уведомлений", show_alert=True)
         return
     await services.accounts.set_notifications(callback.from_user.id, mode)
-
-    await open_settings(callback, services)
+    await open_settings(callback, state, services)
 
 
 async def save_district_settings(callback: CallbackQuery, state: FSMContext, services: Services):
-    data = await state.get_data()
-    if data.get("search_mode") != "settings": return
-
-    if await check_banned(callback.from_user.id, callback, services=services): return
+    if await check_access(callback.from_user.id, callback, services=services, state=state):
+        return
     district = await read_district(callback)
-    if district is None: return
+    if district is None:
+        return
     await services.accounts.set_district(callback.from_user.id, district)
     await state.clear()
 
     text = f"✅ <b>Район изменён</b>\n\n📍 Ваш район: <b>{h(district)}</b>"
     await safe_send(callback, text, reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML")
-    await callback.answer()
+    await safe_answer(callback)
 
 
 def create_router() -> Router:
     router = Router(name="settings")
-    router.message.register(set_district_cmd, Command('set_district'))
-    router.message.register(delete_my_data_cmd, Command('delete_my_data'))
-    router.callback_query.register(open_settings, F.data == 'open_settings')
-    router.callback_query.register(set_notification_mode_cb, F.data.startswith('set_notif_'))
-    router.callback_query.register(save_district_settings, SettingsStates.choosing_district, F.data.startswith('district_'))
+    router.message.register(set_district_cmd, Command("set_district"))
+    router.message.register(delete_my_data_cmd, Command("delete_my_data"))
+    router.callback_query.register(open_settings, F.data == "open_settings")
+    router.callback_query.register(set_notification_mode_cb, F.data.startswith("set_notif_"))
+    router.callback_query.register(save_district_settings, SettingsStates.choosing_district, F.data.startswith("district_"))
     return router

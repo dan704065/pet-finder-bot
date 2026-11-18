@@ -13,8 +13,8 @@ from domain.models import (
 from domain.validation import REASON_LIMIT, validate_text
 from repositories.session import Repositories
 from services.access import require_admin
-from settings import Settings
 from services.notification_payloads import submission_payload
+from settings import Settings
 
 
 class ModerationService:
@@ -82,6 +82,8 @@ class ModerationService:
     async def set_ban(self, actor_id: int, user_id: int, banned: bool, reason="") -> None:
         require_admin(self.settings, actor_id)
         if banned:
+            if user_id == actor_id or user_id in self.settings.admin_ids:
+                raise DomainError("Нельзя заблокировать администратора")
             validate_text(reason, REASON_LIMIT)
         async with self.database.connection(write=True) as connection:
             repositories = Repositories(connection)
@@ -90,6 +92,9 @@ class ModerationService:
                 raise DomainError("Пользователь не найден")
             if user.is_banned == banned:
                 raise DomainError("Статус пользователя уже изменился")
+            if banned:
+                await repositories.applications.suspend_for_banned_user(user_id)
+                await repositories.outbox.cancel_user(user_id)
             await repositories.users.set_ban(user_id, banned, reason)
             await repositories.audit.add(actor_id, "Забанил пользователя" if banned else "Разбанил пользователя", f"ID: {user_id}, Причина: {reason}", subject_user_id=user_id)
             await repositories.outbox.enqueue(user_id, NotificationKind.BANNED if banned else NotificationKind.UNBANNED, {"reason": reason}, event_key=f"ban:{user_id}:{uuid4().hex}", subject_user_id=user_id)

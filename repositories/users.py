@@ -36,6 +36,9 @@ class UserRepository:
     async def set_ban(self, user_id: int, banned: bool, reason: str = "") -> None:
         await self.connection.execute("UPDATE users SET is_banned = ?, ban_reason = ? WHERE user_id = ?", (int(banned), reason, user_id))
 
+    async def clear_sessions(self, user_id: int) -> None:
+        await self.connection.execute("DELETE FROM dialog_sessions WHERE user_id = ?", (user_id,))
+
     async def subscribers(self, district: str) -> list[int]:
         async with self.connection.execute("""SELECT user_id FROM users WHERE is_banned = 0 AND
             (notification_mode = 'city' OR (notification_mode = 'district' AND district = ?))""", (district,)) as cursor:
@@ -50,7 +53,7 @@ class UserRepository:
             row = await cursor.fetchone()
             return row["total"], row["banned"]
 
-    async def delete_data(self, user_id: int) -> None:
+    async def delete_data(self, user_id: int, *, keep_ban_record: bool = False) -> None:
         async with self.connection.execute("SELECT DISTINCT application_id FROM responses WHERE user_id = ?", (user_id,)) as cursor:
             responded = [row["application_id"] for row in await cursor.fetchall()]
         await self.connection.execute("DELETE FROM responses WHERE user_id = ? OR application_id IN (SELECT id FROM applications WHERE user_id = ?)", (user_id, user_id))
@@ -60,4 +63,10 @@ class UserRepository:
         await self.connection.execute("DELETE FROM dialog_sessions WHERE user_id = ?", (user_id,))
         await self.connection.execute("DELETE FROM chat_screens WHERE chat_id = ?", (user_id,))
         await self.connection.execute("DELETE FROM applications WHERE user_id = ?", (user_id,))
-        await self.connection.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        if keep_ban_record:
+            await self.connection.execute(
+                "UPDATE users SET username = '', first_name = '', district = NULL, notification_mode = 'none' WHERE user_id = ?",
+                (user_id,),
+            )
+        else:
+            await self.connection.execute("DELETE FROM users WHERE user_id = ?", (user_id,))

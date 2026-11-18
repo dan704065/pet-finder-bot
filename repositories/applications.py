@@ -42,19 +42,39 @@ class ApplicationRepository:
         async with self.connection.execute("SELECT * FROM applications WHERE user_id = ? ORDER BY status = 'deleted', created_at DESC, id DESC", (user_id,)) as cursor:
             return [application_from_row(row) for row in await cursor.fetchall()]
 
-    async def list_status(self, status: ApplicationStatus, limit=100) -> list[Application]:
+    async def list_status(self, status: ApplicationStatus, limit=1000) -> list[Application]:
         async with self.connection.execute("SELECT * FROM applications WHERE status = ? ORDER BY created_at DESC, id DESC LIMIT ?", (status.value, limit)) as cursor:
             return [application_from_row(row) for row in await cursor.fetchall()]
 
     async def next_active(self, user_id: int, district: str | None, excluded_ids=()) -> Application | None:
         excluded = set(excluded_ids)
-        async with self.connection.execute("""SELECT * FROM applications WHERE status = 'active'
-            AND user_id != ? AND (? IS NULL OR district = ?) ORDER BY created_at DESC, id DESC""",
+        async with self.connection.execute("""SELECT a.* FROM applications a
+            LEFT JOIN users u ON u.user_id = a.user_id
+            WHERE a.status = 'active' AND COALESCE(u.is_banned, 0) = 0
+            AND a.user_id != ? AND (? IS NULL OR a.district = ?)
+            ORDER BY a.created_at DESC, a.id DESC""",
             (user_id, district, district)) as cursor:
             async for row in cursor:
                 if row["id"] not in excluded:
                     return application_from_row(row)
         return None
+
+    async def suspend_for_banned_user(self, user_id: int, reason: str = "Автор заблокирован") -> list[int]:
+        async with self.connection.execute(
+            "SELECT id FROM applications WHERE user_id = ? AND status IN ('active', 'moderation')",
+            (user_id,),
+        ) as cursor:
+            ids = [row["id"] for row in await cursor.fetchall()]
+        if ids:
+            await self.connection.execute(
+                "UPDATE applications SET status = 'paused' WHERE user_id = ? AND status = 'active'",
+                (user_id,),
+            )
+            await self.connection.execute(
+                "UPDATE applications SET status = 'rejected', reject_reason = ? WHERE user_id = ? AND status = 'moderation'",
+                (reason, user_id),
+            )
+        return ids
 
     async def transition(self, application_id: int, status: ApplicationStatus, *, expected: tuple[ApplicationStatus, ...], owner_id: int | None = None, reason="") -> bool:
         placeholders = ",".join("?" for _ in expected)

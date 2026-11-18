@@ -7,11 +7,17 @@ from domain.models import (
     NotificationKind,
     OWNER_TRANSITIONS,
 )
-from domain.validation import RESPONSE_LIMIT, validate_draft, validate_district, validate_text
+from domain.validation import RESPONSE_LIMIT, validate_district, validate_draft, validate_text
 from repositories.session import Repositories
 from services.access import require_user
-from settings import Settings
 from services.notification_payloads import submission_payload
+from settings import Settings
+
+MAX_SQLITE_ID = 2**63 - 1
+
+
+def _valid_id(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 < value <= MAX_SQLITE_ID
 
 
 class ApplicationService:
@@ -33,6 +39,8 @@ class ApplicationService:
             return application
 
     async def owned(self, actor_id: int, application_id: int) -> Application:
+        if not _valid_id(application_id):
+            raise ApplicationUnavailable()
         async with self.database.connection() as connection:
             repositories = Repositories(connection)
             await require_user(repositories, actor_id)
@@ -48,6 +56,8 @@ class ApplicationService:
             return await repositories.applications.list_owned(actor_id)
 
     async def change_status(self, actor_id: int, application_id: int, status: ApplicationStatus) -> None:
+        if not _valid_id(application_id):
+            raise ApplicationUnavailable()
         expected = OWNER_TRANSITIONS[status]
         async with self.database.connection(write=True) as connection:
             repositories = Repositories(connection)
@@ -60,6 +70,8 @@ class ApplicationService:
             await repositories.audit.add(actor_id, actions[status], f"#{application_id}", application_id=application_id)
 
     async def delete_permanently(self, actor_id: int, application_id: int) -> None:
+        if not _valid_id(application_id):
+            raise ApplicationUnavailable()
         async with self.database.connection(write=True) as connection:
             repositories = Repositories(connection)
             await require_user(repositories, actor_id)
@@ -88,23 +100,33 @@ class ApplicationService:
             return await repositories.applications.next_active(actor_id, district) is not None
 
     async def public(self, actor_id: int, application_id: int, *, count_view=False) -> Application:
+        if not _valid_id(application_id):
+            raise ApplicationUnavailable()
         async with self.database.connection(write=count_view) as connection:
             repositories = Repositories(connection)
             await require_user(repositories, actor_id)
             application = await repositories.applications.get(application_id)
             if application is None or application.status != ApplicationStatus.ACTIVE or application.user_id == actor_id:
                 raise ApplicationUnavailable()
+            owner = await repositories.users.get(application.user_id)
+            if owner is not None and owner.is_banned:
+                raise ApplicationUnavailable()
             if count_view:
-                await repositories.applications.increment_views(application_id)
+                await repositories.applications.increment_views(application.id)
             return application
 
     async def respond(self, actor_id: int, application_id: int, location: str) -> None:
         validate_text(location, RESPONSE_LIMIT)
+        if not _valid_id(application_id):
+            raise ApplicationUnavailable()
         async with self.database.connection(write=True) as connection:
             repositories = Repositories(connection)
             actor = await require_user(repositories, actor_id)
             application = await repositories.applications.get(application_id)
             if application is None or application.status != ApplicationStatus.ACTIVE or application.user_id == actor_id:
+                raise ApplicationUnavailable()
+            owner = await repositories.users.get(application.user_id)
+            if owner is not None and owner.is_banned:
                 raise ApplicationUnavailable()
             response_id = await repositories.applications.add_response(application_id, actor_id, location)
             await repositories.audit.add(actor_id, "Отклик", f"Анкета #{application_id}", application_id=application_id)

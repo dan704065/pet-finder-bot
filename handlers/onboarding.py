@@ -1,14 +1,14 @@
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
-from aiogram.filters import CommandStart
+from aiogram import F, Router
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 
-from handlers.common import main_menu, get_greeting, read_district, check_banned
+from handlers.common import check_access, check_banned, consent_keyboard, consent_text, get_greeting, main_menu, read_district
 from handlers.states import InitialStates, LocationStates
 from keyboards.user_kb import get_district_keyboard
 from presentation.texts import DISCLAIMER_TEXT
 from services.container import Services
-from utils.messages import h, safe_send, send_text
+from utils.messages import h, safe_answer, safe_send, send_text
 
 
 async def user_start(message: Message, state: FSMContext, services: Services):
@@ -17,23 +17,15 @@ async def user_start(message: Message, state: FSMContext, services: Services):
     await state.clear()
     user = await services.accounts.get(message.from_user.id)
     if user is None:
-        greeting = get_greeting()
-        name = message.from_user.first_name or ""
-        greeting_text = f"{greeting}, <b>{h(name)}</b>!" if name else f"{greeting}!"
-        text = (
-            f"👋 <b>{greeting_text}</b>\n\n"
-            "Это бот поиска потерянных животных в вашем районе.\n\n"
-            "Перед началом работы необходимо согласие на обработку "
-            "персональных данных в соответствии с 152-ФЗ.\n\n"
-            "🔒 Данные не передаются третьим лицам.\n"
-            "🗑 Удалить данные: /delete_my_data"
+        await send_text(
+            message.answer,
+            consent_text(message.from_user.first_name),
+            reply_markup=consent_keyboard(),
+            parse_mode="HTML",
         )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Согласен", callback_data="agree_pd")]
-        ])
-        await send_text(message.answer, text, reply_markup=kb, parse_mode="HTML")
     else:
-        if await check_banned(message.from_user.id, message, services=services): return
+        if await check_banned(message.from_user.id, message, services=services, state=state):
+            return
         greeting = get_greeting()
         name = message.from_user.first_name or ""
         greeting_text = f"{greeting}, <b>{h(name)}</b>!" if name else f"{greeting}!"
@@ -41,39 +33,61 @@ async def user_start(message: Message, state: FSMContext, services: Services):
         await safe_send(message, text, reply_markup=main_menu(services, message.from_user.id), parse_mode="HTML")
 
 
+async def cancel_cmd(message: Message, state: FSMContext, services: Services):
+    if await state.get_state() in {LocationStates.waiting_for_location.state, LocationStates.confirming_district.state}:
+        await send_text(message.answer, "Запрос геопозиции отменён.", reply_markup=ReplyKeyboardRemove())
+    await state.clear()
+    if await check_access(message.from_user.id, message, services=services, state=state):
+        return
+    text = "❌ <b>Действие отменено</b>\n\n🏠 Выберите действие:"
+    await send_text(message.answer, text, reply_markup=main_menu(services, message.from_user.id), parse_mode="HTML")
+
+
 async def agree_pd(callback: CallbackQuery, state: FSMContext, services: Services):
+    if await check_banned(callback.from_user.id, callback, services=services, state=state):
+        return
     user = await services.accounts.register(callback.from_user.id, callback.from_user.username or "", callback.from_user.first_name or "")
     if not user or not user.district:
-        text = "📍 Для более эффективного поиска укажите ваш район. Это позволит получать уведомления о животных рядом.\n\nВы можете указать район сейчас или сделать это позже в Настройках."
+        text = (
+            "📍 Для более эффективного поиска укажите ваш район. Это позволит получать уведомления о животных рядом.\n\n"
+            "Вы можете указать район сейчас или сделать это позже в Настройках."
+        )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Указать район", callback_data="prompt_initial_district")],
             [InlineKeyboardButton(text="📍 Не знаю, подскажите мне", callback_data="detect_district")],
-            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="skip_initial_district")]
+            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="skip_initial_district")],
         ])
         await safe_send(callback, text, reply_markup=kb, parse_mode="HTML")
         await state.set_state(InitialStates.waiting_for_district)
-        await callback.answer()
+        await safe_answer(callback)
         return
 
     await show_main_menu_after_consent(callback, services=services)
 
 
 async def prompt_initial_district(callback: CallbackQuery, state: FSMContext, services: Services):
+    if await check_access(callback.from_user.id, callback, services=services, state=state):
+        return
     text = "📍 Выберите ваш район:"
     await safe_send(callback, text, reply_markup=get_district_keyboard(), parse_mode="HTML")
     await state.set_state(InitialStates.waiting_for_district)
-    await callback.answer()
+    await safe_answer(callback)
 
 
 async def save_initial_district(callback: CallbackQuery, state: FSMContext, services: Services):
+    if await check_access(callback.from_user.id, callback, services=services, state=state):
+        return
     district = await read_district(callback)
-    if district is None: return
+    if district is None:
+        return
     await services.accounts.set_district(callback.from_user.id, district)
     await state.clear()
     await show_main_menu_after_consent(callback, services=services)
 
 
 async def skip_initial_district(callback: CallbackQuery, state: FSMContext, services: Services):
+    if await check_access(callback.from_user.id, callback, services=services, state=state):
+        return
     await state.clear()
     await show_main_menu_after_consent(callback, services=services)
 
@@ -85,14 +99,16 @@ async def show_main_menu_after_consent(callback: CallbackQuery, services: Servic
     text = f"👋 <b>{greeting_text}</b>\n\n{DISCLAIMER_TEXT}"
     await send_text(callback.message.answer, text, parse_mode="HTML", keep=True)
     await send_text(callback.message.answer, "✅ Выберите действие:", reply_markup=main_menu(services, callback.from_user.id), parse_mode="HTML")
-    await callback.answer()
+    await safe_answer(callback)
 
 
 def create_router() -> Router:
     router = Router(name="onboarding")
     router.message.register(user_start, CommandStart())
-    router.callback_query.register(agree_pd, F.data == 'agree_pd')
-    router.callback_query.register(prompt_initial_district, F.data == 'prompt_initial_district')
-    router.callback_query.register(save_initial_district, InitialStates.waiting_for_district, F.data.startswith('district_'))
-    router.callback_query.register(skip_initial_district, F.data == 'skip_initial_district')
+    router.message.register(cancel_cmd, Command("cancel"))
+    router.callback_query.register(agree_pd, F.data == "agree_pd")
+    router.callback_query.register(prompt_initial_district, F.data == "prompt_initial_district")
+    router.callback_query.register(save_initial_district, InitialStates.waiting_for_district, F.data.startswith("district_"))
+    router.callback_query.register(skip_initial_district, F.data == "skip_initial_district")
+    router.callback_query.register(skip_initial_district, InitialStates.waiting_for_district, F.data == "cancel")
     return router

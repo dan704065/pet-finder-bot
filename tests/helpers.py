@@ -1,26 +1,27 @@
 """Fixtures may bypass domain policies to exercise stale/corrupt/legacy states."""
 
-from uuid import uuid4
-import aiosqlite
-from database.connection import Database
-from database.migrations import migrate
-from domain.models import ApplicationDraft, ApplicationKind
-from repositories.session import Repositories
 import asyncio
-import tempfile
-import types
-import unittest
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
+import tempfile
+import unittest
+from uuid import uuid4
+
 from aiogram import Bot
-from aiogram.types import Update
+from aiogram.types import InlineKeyboardMarkup, Message, Update
+import aiosqlite
+
 from bot import create_dispatcher
+from database.connection import Database
+from database.migrations import migrate
+from domain.models import ApplicationDraft, ApplicationKind
 from handlers import states
+from repositories.session import Repositories
 from services.container import Services
 from settings import Settings
-from workers.notifications import NotificationWorker
 from utils.messages import plain_text, text_length
+from workers.notifications import NotificationWorker
 
 
 class Fixtures:
@@ -107,8 +108,19 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
             await self.db.add_user(user_id, "", "Tester")
         self.bot = Bot(self.settings.bot_token)
         self.outgoing = []
+        self.answered_callbacks = set()
 
         async def request(bot, method, timeout=None):
+            if method.__api_method__ == "answerCallbackQuery":
+                self.assertNotIn(method.callback_query_id, self.answered_callbacks, "Duplicate callback.answer() call")
+                self.answered_callbacks.add(method.callback_query_id)
+            markup = getattr(method, "reply_markup", None)
+            if isinstance(markup, InlineKeyboardMarkup):
+                buttons = [b for row in markup.inline_keyboard for b in row]
+                self.assertLessEqual(len(buttons), 100)
+                for b in buttons:
+                    if b.callback_data is not None:
+                        self.assertTrue(1 <= len(b.callback_data.encode("utf-8")) <= 64)
             for field, limit in (("text", 4096), ("caption", 1024)):
                 value = getattr(method, field, None)
                 if not value:
@@ -136,19 +148,20 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
         return self.dp.fsm.get_context(bot=self.bot, chat_id=user_id, user_id=user_id)
 
     async def feed(self, user_id=201, *, data=None, text=None, photo=False, first_name="Tester", drain=True,
-                   location=None, callback_message=None):
+                   location=None, callback_message=None, chat_id=None, chat_type="private"):
         self.sequence += 1
         actor = {"id": user_id, "is_bot": False, "first_name": first_name}
+        target_chat = user_id if chat_id is None else chat_id
         message = {
             "message_id": self.sequence, "date": datetime.now(timezone.utc),
-            "chat": {"id": user_id, "type": "private"}, "from": actor,
+            "chat": {"id": target_chat, "type": chat_type}, "from": actor,
         }
         if photo:
             message["photo"] = [{"file_id": photo if isinstance(photo, str) else "photo", "file_unique_id": "unique", "width": 100, "height": 100}]
         elif location:
             message["location"] = location
         else:
-            message["text"] = text or "Menu"
+            message["text"] = text if text is not None else "Menu"
         payload = {"update_id": self.sequence}
         if data is not None:
             payload["callback_query"] = {
@@ -156,7 +169,7 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
                 "message": callback_message.model_dump() if callback_message else message, "data": data,
             }
         else:
-            if text and text.startswith("/"):
+            if text and text.startswith("/") and len(text.split()[0]) > 1:
                 message["entities"] = [{"type": "bot_command", "offset": 0, "length": len(text.split()[0])}]
             payload["message"] = message
         result = await self.dp.feed_update(self.bot, Update.model_validate(payload))
@@ -173,3 +186,57 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
         async with self.db.aiosqlite.connect(self.db.DB_PATH) as connection:
             async with connection.execute(query, params) as cursor:
                 return await cursor.fetchall()
+
+
+class RealisticBotTestCase(BotTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        original = self.bot.session.make_request
+        self.sent = {}
+        self.deleted = set()
+        self.message_sequence = 10000
+
+        async def realistic_request(bot, method, timeout=None):
+            await original(bot, method, timeout)
+            api = method.__api_method__
+            if api == "deleteMessage":
+                self.deleted.add(method.message_id)
+                return True
+            if api not in {"sendMessage", "sendPhoto", "sendMediaGroup", "editMessageText", "editMessageReplyMarkup"}:
+                return True
+
+            def make_message(photo=None):
+                if api.startswith("edit"):
+                    mid = method.message_id
+                else:
+                    self.message_sequence += 1
+                    mid = self.message_sequence
+                previous = self.sent.get(mid)
+                content = previous.model_dump() if previous else {}
+                markup = getattr(method, "reply_markup", None)
+                content.update(
+                    message_id=mid,
+                    date=datetime.now(timezone.utc),
+                    chat={"id": method.chat_id, "type": "private"},
+                    reply_markup=markup if isinstance(markup, InlineKeyboardMarkup) else None,
+                )
+                if api in {"sendMessage", "editMessageText"}:
+                    content["text"] = method.text
+                if photo:
+                    content["photo"] = [{"file_id": str(photo), "file_unique_id": "u", "width": 100, "height": 100}]
+                    content["caption"] = getattr(method, "caption", None)
+                msg = Message.model_validate(content).as_(self.bot)
+                self.sent[mid] = msg
+                return msg
+
+            if api == "sendMediaGroup":
+                return [make_message(item.media) for item in method.media]
+            return make_message(getattr(method, "photo", None))
+
+        self.bot.session.make_request = realistic_request
+
+    def latest(self, chat=201):
+        return next(msg for mid, msg in reversed(self.sent.items()) if msg.chat.id == chat and mid not in self.deleted)
+
+    async def click(self, data, *, chat=201, message=None):
+        await self.feed(chat, data=data, callback_message=message or self.latest(chat))

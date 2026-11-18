@@ -66,6 +66,13 @@ class OutboxRepository:
         await self.connection.execute("""UPDATE notification_outbox SET status = 'cancelled', locked_until = NULL
             WHERE application_id = ? AND status IN ('pending', 'processing') AND kind IN ('submitted', 'published', 'reminder')""", (application_id,))
 
+    async def cancel_user(self, user_id: int) -> None:
+        await self.connection.execute("""UPDATE notification_outbox SET status = 'cancelled', locked_until = NULL
+            WHERE status IN ('pending', 'processing') AND kind NOT IN ('banned', 'unbanned')
+              AND (recipient_id = ? OR subject_user_id = ?
+                   OR application_id IN (SELECT id FROM applications WHERE user_id = ?))""",
+            (user_id, user_id, user_id))
+
     async def delete_application(self, application_id: int) -> None:
         await self.connection.execute("DELETE FROM notification_outbox WHERE application_id = ?", (application_id,))
 

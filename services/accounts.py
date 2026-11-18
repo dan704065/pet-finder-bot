@@ -43,7 +43,7 @@ class AccountService:
     async def delete_data(self, actor_id: int) -> None:
         async with self.database.connection(write=True) as connection:
             repositories = Repositories(connection)
-            await require_user(repositories, actor_id)
+            user = await repositories.users.get(actor_id)
             await repositories.audit.delete_user_data(actor_id)
             await repositories.outbox.delete_user_data(actor_id)
-            await repositories.users.delete_data(actor_id)
+            await repositories.users.delete_data(actor_id, keep_ban_record=bool(user and user.is_banned))

@@ -8,11 +8,27 @@ from repositories.session import Repositories
 from services.access import require_user
 from settings import Settings
 
+MAX_SQLITE_ID = 2**63 - 1
+
+
+def _valid_id(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 < value <= MAX_SQLITE_ID
+
 
 class SupportService:
     def __init__(self, database: Database, settings: Settings):
         self.database = database
         self.settings = settings
+
+    async def validate_complaint_target(self, actor_id: int, application_id: int) -> None:
+        if not _valid_id(application_id):
+            raise ApplicationUnavailable()
+        async with self.database.connection() as connection:
+            repositories = Repositories(connection)
+            await require_user(repositories, actor_id)
+            application = await repositories.applications.get(application_id)
+            if application is None or application.status == ApplicationStatus.DELETED:
+                raise ApplicationUnavailable()
 
     async def submit(self, actor_id: int, category: str, text: str, *, application_id: int | None = None) -> None:
         validate_text(text, SUPPORT_LIMIT)
@@ -20,6 +36,8 @@ class SupportService:
             raise ValidationError("Неизвестный тип обращения")
         if not self.settings.admin_ids:
             raise DomainError("Поддержка временно недоступна")
+        if category == "complaint" and not _valid_id(application_id):
+            raise ApplicationUnavailable()
         async with self.database.connection(write=True) as connection:
             repositories = Repositories(connection)
             await require_user(repositories, actor_id)

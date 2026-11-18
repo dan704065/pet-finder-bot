@@ -1,11 +1,8 @@
-from datetime import datetime, timezone
 import unittest
-
-from aiogram.types import Message, InlineKeyboardMarkup
 
 from bot import create_dispatcher
 from domain.districts import NOVOSIBIRSK_DISTRICTS
-from helpers import BotTestCase
+from helpers import RealisticBotTestCase
 from services.geolocation import detect_district, district_boundaries, in_ring
 
 
@@ -33,56 +30,7 @@ class GeographyTests(unittest.TestCase):
         self.assertFalse(in_ring(3, 1, ring))
 
 
-class UXTests(BotTestCase):
-    async def asyncSetUp(self):
-        await super().asyncSetUp()
-        original = self.bot.session.make_request
-        self.sent = {}
-        self.deleted = set()
-        self.message_sequence = 10000
-
-        async def realistic_request(bot, method, timeout=None):
-            await original(bot, method, timeout)
-            api = method.__api_method__
-            if api == "deleteMessage":
-                self.deleted.add(method.message_id)
-                return True
-            if api not in {"sendMessage", "sendPhoto", "sendMediaGroup", "editMessageText", "editMessageReplyMarkup"}:
-                return True
-
-            def make_message(photo=None):
-                if api.startswith("edit"):
-                    mid = method.message_id
-                else:
-                    self.message_sequence += 1
-                    mid = self.message_sequence
-                previous = self.sent.get(mid)
-                content = previous.model_dump() if previous else {}
-                markup = getattr(method, "reply_markup", None)
-                content.update(message_id=mid, date=datetime.now(timezone.utc),
-                    chat={"id": method.chat_id, "type": "private"},
-                    reply_markup=markup if isinstance(markup, InlineKeyboardMarkup) else None)
-                if api in {"sendMessage", "editMessageText"}:
-                    content["text"] = method.text
-                if photo:
-                    content["photo"] = [{"file_id": str(photo), "file_unique_id": "u", "width": 100, "height": 100}]
-                    content["caption"] = getattr(method, "caption", None)
-                msg = Message.model_validate(content).as_(self.bot)
-                self.sent[mid] = msg
-                return msg
-
-            if api == "sendMediaGroup":
-                return [make_message(item.media) for item in method.media]
-            return make_message(getattr(method, "photo", None))
-
-        self.bot.session.make_request = realistic_request
-
-    def latest(self, chat=201):
-        return next(msg for mid, msg in reversed(self.sent.items()) if msg.chat.id == chat and mid not in self.deleted)
-
-    async def click(self, data, *, chat=201, message=None):
-        await self.feed(chat, data=data, callback_message=message or self.latest(chat))
-
+class UXTests(RealisticBotTestCase):
     async def test_cleanup_keeps_submission_receipt_across_navigation_and_restart(self):
         await self.feed(text="/start")
         await self.click("lost_pet")
